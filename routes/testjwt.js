@@ -2,13 +2,27 @@ const express = require("express");
 const router = express.Router();
 const jwt = require("jsonwebtoken");
 const bcrypt = require("bcryptjs");
-const cors = require("cors");
 const redis = require("redis");
+const cors = require("cors");
+const fileUpload = require("express-fileupload");
+const fs = require("fs");
 require("dotenv").config();
 const data = require("../models/data1");
 const table = require("../models/usertable");
+const diet = require("../models/diet");
+const db = require("../queries/queries");
 
 let refreshTokens = [];
+
+let redisClient;
+
+(async () => {
+  redisClient = redis.createClient(6379);
+
+  redisClient.on("error", (error) => console.error(`Error : ${error}`));
+
+  await redisClient.connect();
+})();
 
 router.use(
   cors({
@@ -17,14 +31,148 @@ router.use(
     methods: ["GET", "POST", "DELETE", "UPDATE", "PUT", "PATCH"],
   })
 );
+router.use(fileUpload());
 
-router.get("/details", authenticateToken, async (req, res) => {
+router.get("/diet", authenticateToken, async (req, res) => {
   try {
-    console.log("***req.query", req.query);
-    const existingUser = await table.findOne(
-      { email: req.user.email },
-      { calorie_intake: { $slice: [0, 10] } } // $slice: [offset, limit] => will return 'limit' items after 'offset' number of items
-    );
+    const email = req.user.email;
+    const existingUser = await diet.findOne({ email: email });
+    if (existingUser) {
+      existingUser.sayHi();
+      res.status(200).json(existingUser?.foods);
+    } else res.status(400).json({ message: "Doesn't exist" });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+router.get("/sql", db.getUsers);
+
+router.post("/sql1", async (req, res) => {
+  const name = req.body.name;
+  const email = req.body.email;
+  db.pool.query(
+    "INSERT INTO users (name,email) VALUES ($1, $2)",
+    [name, email],
+    (error, results) => {
+      if (error) {
+        throw error;
+      }
+      console.log(results.rows);
+      res.status(200).json(results.rows);
+    }
+  );
+});
+
+router.patch("/sql1", async (req, res) => {
+  const contact = req.body.contact;
+  const email = req.body.email;
+  db.pool.query(
+    "UPDATE users SET contact = $1 where email = $2 returning *",
+    [contact, email],
+    (error, results) => {
+      if (error) {
+        throw error;
+      }
+      console.log(results.rows);
+      res.status(200).json(results.rows);
+    }
+  );
+});
+
+router.get("/sql2", async (req, res) => {
+  db.pool.query(
+    `SELECT * FROM users WHERE name=$1`,
+    [req.query.name.toUpperCase()],
+    (error, results) => {
+      if (error) {
+        throw error;
+      }
+      res.status(200).json(results.rows);
+    }
+  );
+});
+
+router.post("/diet", authenticateToken, async (req, res) => {
+  try {
+    const existingUser = await diet.findOne({ email: req.user.email });
+    if (existingUser) {
+      const updatedDiet = await diet.findOneAndUpdate(
+        { email: req.user.email },
+        { $push: { foods: { foodName: req.body.foodName } } },
+        { upsert: true }
+      );
+      if (updatedDiet) res.status(200).json(updatedDiet);
+    } else {
+      const postDiet = new diet({
+        email: req.user.email,
+        foods: [{ foodName: req.body.foodName }],
+      });
+      const savedDiet = await postDiet.save();
+      res.status(200).json(savedDiet);
+    }
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+router.get("/download", authenticateToken, async (req, res) => {
+  try {
+    const email = req.user.email;
+    const existingUser = await data.findOne({ email: email });
+    if (existingUser?.image) {
+      const options = {
+        root: `${__dirname}/uploads/`,
+        dotfiles: "deny",
+        headers: {
+          "x-timestamp": Date.now(),
+          "x-sent": true,
+        },
+      };
+      res.sendFile(existingUser.image, options);
+    } else res.status(400).json({ message: "Image doesn't exist" });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+router.post("/upload", authenticateToken, async (req, res) => {
+  try {
+    const email = req.user.email;
+    const existingUser = await data.findOne({ email: email });
+    if (existingUser) {
+      console.log("****yay", req.user);
+      const myFile = req.files.file;
+      console.log("***file:", myFile);
+      //  mv() method places the file inside public directory
+      myFile.mv(`${__dirname}/uploads/${myFile.name}`, async function (err) {
+        if (err) {
+          console.log(err);
+          return res.status(500).send({ msg: "Error occured" });
+        }
+        existingUser.image = myFile.name;
+        const updatedData = await existingUser.save();
+        // returing the response with file path and name
+        res.status(200).json(updatedData);
+        // return res.send({ name: myFile.name, path: `/${myFile.name}` });
+      });
+      // res.status(200).json(updatedData);
+    } else res.status(400).json({ message: "Not Found" });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+router.get("/details", [authenticateToken, cache], async (req, res) => {
+  let resCopy;
+  try {
+    console.log("***req.query", res.value);
+    // const existingUser = await table.findOne(
+    //   { email: req.user.email },
+    //   { calorie_intake: { $slice: [0, 10] } } // $slice: [offset, limit] => will return 'limit' items after 'offset' number of items
+    // );
+    // post redis integration
+    const existingUser = res.value;
     if (existingUser) {
       if (req.query && Object.keys(req.query).length > 0) {
         const {
@@ -37,14 +185,23 @@ router.get("/details", authenticateToken, async (req, res) => {
         let findResult = null;
         let queriedResult = null;
         // let xxx = "calorie_value";
-        if (intake_date)
-          queriedResult = await table.findOne(
-            {
-              "calorie_intake.intake_date": intake_date, // for search query
-            },
-            { "calorie_intake.$": 1 }
+        if (intake_date) {
+          queriedResult = existingUser?.calorie_intake;
+          queriedResult = queriedResult.filter(
+            (item) => item.intake_date == intake_date
           );
+        }
+        // queriedResult = await table.findOne(
+        //   {
+        //     "calorie_intake.intake_date": intake_date, // for search query
+        //   },
+        //   { "calorie_intake.$": 1 }
+        // );
         if (calorie_value) {
+          queriedResult = existingUser?.calorie_intake;
+          queriedResult = queriedResult.filter(
+            (item) => item.calorie_value == calorie_value
+          );
           // findResult = await table
           //   .find()
           //   .where({ email: req.user.email })
@@ -52,14 +209,18 @@ router.get("/details", authenticateToken, async (req, res) => {
           //   .equals(calorie_value);
           // .slice([offset, limit]); // find a specific property value pair from object.
 
-          queriedResult = await table.find(
-            { email: req.user.email },
-            {
-              calorie_intake: {
-                $elemMatch: { calorie_value: calorie_value }, // find a particular item from array; { $gte: calorie_value } for finding greater than values
-              },
-            }
-          );
+          // queriedResult = await table.find(
+          //   { email: req.user.email },
+          //   {
+          //     calorie_intake: {
+          //       $elemMatch: { calorie_value: calorie_value }, // find a particular item from array; { $gte: calorie_value } for finding greater than values
+          //     },
+          //   }
+          // );
+          // const result = queriedResult[0]?.calorie_intake?.length;
+          // queriedResult[0].numFound = result;
+          // resCopy = JSON.parse(JSON.stringify(queriedResult));
+          // resCopy[0].numFound = result;
           // queriedResult = await table.aggregate([
           //   { $match: { email: req.user.email } },
           //   { $unwind: "$calorie_intake" },
@@ -68,13 +229,26 @@ router.get("/details", authenticateToken, async (req, res) => {
           // .slice([offset, limit]);
         }
         if (req.query.offset && req.query.limit) {
-          queriedResult = await table.find(
-            { email: req.user.email },
-            { calorie_intake: { $slice: [Number(offset), Number(limit)] } } // $slice: [offset, limit] => will return 'limit' items after 'offset' number of items
+          queriedResult = existingUser?.calorie_intake;
+          queriedResult = queriedResult.slice(
+            Number(offset),
+            Number(limit) + Number(offset)
           );
+          console.log(
+            "%%%%queriedResult",
+            typeof req.query.offset,
+            typeof req.query.limit,
+            queriedResult.length
+          );
+          // queriedResult = await table.find(
+          //   { email: req.user.email },
+          //   { calorie_intake: { $slice: [Number(offset), Number(limit)] } } // $slice: [offset, limit] => will return 'limit' items after 'offset' number of items
+          // );
         }
-        if (queriedResult) res.status(200).json(queriedResult);
-        else res.status(404).json({ message: "Not Found" });
+        if (queriedResult) {
+          console.log("###gotcha", queriedResult);
+          res.status(200).json(queriedResult);
+        } else res.status(404).json({ message: "Not Found" });
       } else res.status(200).json(existingUser);
     } else res.status(400).json({ message: "Not Found" });
   } catch (err) {
@@ -166,7 +340,8 @@ router.delete("/details", authenticateToken, async (req, res) => {
     res.status(500).json({ message: err.message });
   }
 });
-router.get("/", authenticateToken, async (req, res) => {
+
+router.get("/", [authenticateToken, cache], async (req, res) => {
   try {
     const dbData = await data.findOne({
       email: req.user.email.toLowerCase(),
@@ -193,6 +368,7 @@ router.post("/signup", async (req, res) => {
     email: email.toLowerCase(),
     password: encryptedPassword,
     contact: contact ?? null,
+    image: null,
   };
   const oldUser = await data.findOne({ email: email.toLowerCase() });
 
@@ -205,7 +381,7 @@ router.post("/signup", async (req, res) => {
     console.log(postData);
     const newData = await postData.save();
     console.log("***newData: ", JSON.stringify(newData));
-    res.sendStatus(201);
+    res.status(200).json({ message: newData });
     // res.status(201).json(newData);
   } catch (err) {
     res.status(500).json({ message: err.message });
@@ -217,7 +393,10 @@ router.post("/login", async (req, res) => {
   const password = req.body.password;
   console.log("***email: ", email, "::::password: ", password);
   const existingUser = await data.findOne({ email: email.toLowerCase() });
-  const checkPassword = await bcrypt.compare(password, existingUser.password);
+  const checkPassword = await bcrypt.compare(
+    password,
+    existingUser?.password ?? ""
+  );
   // await bcrypt.compare(password, existingUser.password);
   if (existingUser && checkPassword) {
     console.log(
@@ -291,11 +470,47 @@ function parseCookies(request) {
   return list;
 }
 
+async function cache(req, res, next) {
+  const { email, image } = req.user;
+  let results;
+  let isCached = false;
+  console.log("****inside cache", email, image);
+  try {
+    const cacheResults = await redisClient.get(email);
+    if (cacheResults) {
+      isCached = true;
+      results = JSON.parse(cacheResults);
+      console.log("*****cached results=", results);
+    } else {
+      results = await table.findOne(
+        { email: req.user.email },
+        { calorie_intake: { $slice: [0, 10] } }
+      );
+      if (results == null) {
+        return res.status(404).json({ message: "wrong name" });
+      }
+      console.log("****database results", results);
+      await redisClient.set(email, JSON.stringify(results?.calorie_intake));
+      const tt = await redisClient.get(email);
+      console.log("***REDIS", tt);
+    }
+  } catch (err) {
+    return res.status(500).json({ message: err.message });
+  }
+  res.value = {
+    calorie_intake: results,
+    email: email,
+    // isCached: isCached,
+  };
+  next();
+}
+
 function authenticateToken(req, res, next) {
   const authHeader = req.headers["authorization"];
   let token = authHeader && authHeader.split(" ")[1];
   token = parseCookies(req)?.jwt;
   console.log("***token: ", token);
+  console.log("***req, res", req.body);
   if (!token) return res.sendStatus(401);
   // if (!refreshTokens.includes(token)) {
   //   console.log("####includes check");
@@ -306,6 +521,7 @@ function authenticateToken(req, res, next) {
       console.log("$$$$$error:-", err);
       return res.cookie("jwt", "", { maxAge: 1 }).sendStatus(403);
     }
+    console.log("***user", user);
     req.user = user;
     // const accessToken = generateAccessToken({ name: user.name });
     // res.json({ accessToken: accessToken });

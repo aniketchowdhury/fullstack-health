@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import Modal from "./Modal";
 import NewEntry from "./NewEntry";
 
@@ -9,6 +9,56 @@ const Dashboard = () => {
   const [offset, setOffset] = useState(0);
   const [isUpdateCalorieModalOpen, setUpdateCalorieModal] = useState(null);
   const [updatedCalorie, setUpdatedCalorie] = useState("");
+  const [file, setFile] = useState(""); // storing the uploaded file
+  const el = useRef();
+
+  const handleChange = (e) => {
+    // setProgess(0)
+    const file = e.target.files[0]; // accesing file
+    console.log(file);
+    setFile(file); // storing file
+  };
+
+  const uploadFile = async () => {
+    const formData = new FormData();
+    formData.append("file", file); // appending file
+    // formData.append("email", "abcd123@abc");
+    try {
+      const res = await fetch(`http://localhost:3000/jwt/upload`, {
+        method: "POST",
+        credentials: "include", // added this part
+        // headers: {
+        //   "Content-Type": "multipart/form-data", // content-type not required while sending file
+        // },
+        body: formData,
+      });
+      if (res.ok) {
+        const foo = await res.json();
+        console.log("***uploaded", foo);
+      }
+    } catch (err) {}
+  };
+
+  const downloadFile = async () => {
+    try {
+      const res = await fetch(`http://localhost:3000/jwt/download`, {
+        method: "GET",
+        credentials: "include", // added this part
+      });
+      if (res.ok) {
+        const blob = await res.blob();
+        console.log("***downloaded", blob);
+        // 2. Create blob link to download
+        const fileURL = window.URL.createObjectURL(blob);
+        // Setting various property values
+        let alink = document.createElement("a");
+        alink.href = fileURL;
+        alink.download = "SamplePDF";
+        alink.click();
+      }
+    } catch (err) {}
+  };
+
   useEffect(() => {
     const fetchData = async () => {
       try {
@@ -21,8 +71,8 @@ const Dashboard = () => {
         );
         if (res.ok) {
           const data = await res.json();
-          console.table("***details:-", data[0]);
-          setDetails(data[0]);
+          console.table("***details:-", data);
+          setDetails(data);
         }
       } catch (err) {}
     };
@@ -109,7 +159,7 @@ const Dashboard = () => {
       );
       if (res.ok) {
         const data = await res.json();
-        console.log("***search data: ", data?.calorie_intake);
+        console.log("***search data: ", data);
       } else throw res;
     } catch (err) {
       const msg = await err.json();
@@ -126,13 +176,16 @@ const Dashboard = () => {
       {isUpdateCalorieModalOpen && renderUpdateModal()}
       <button onClick={openModal}>add daily calorie intake</button>
       <input type={searchValue} onChange={(e) => setValue(e.target.value)} />
+      <button onClick={() => uploadFile()}>UPLOAD</button>
+      <button onClick={() => downloadFile()}>DOWNLOAD</button>
       <button onClick={() => handleSearch()}>SEARCH</button>
+      <input type="file" ref={el} onChange={handleChange} />
       <h2>{details?.email}</h2>
       <h2>{details?.weight}</h2>
       <h2>{details?.height}</h2>
       <ul style={{ display: "flex", flexDirection: "column" }}>
-        {details?.calorie_intake &&
-          details?.calorie_intake?.map((item, index) => (
+        {details &&
+          details?.map((item, index) => (
             <li key={index}>
               <h4>
                 {item?.calorie_value}&nbsp;&nbsp;&nbsp;{item?.intake_date}

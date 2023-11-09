@@ -65,20 +65,6 @@ const HomePage = () => {
     }
   };
 
-  const logout = async () => {
-    const res = await fetch(`http://localhost:3000/jwt/logout`, {
-      method: "GET",
-      withCredentials: true,
-      credentials: "include", // added this part
-      headers: {
-        "Content-Type": "application/json",
-        // Cookie: "jwt",
-      },
-    });
-    if (res.ok) {
-      setStatus("login");
-    }
-  };
   return (
     <div className="loginContainer">
       {status === "login" && (
@@ -114,7 +100,7 @@ const HomePage = () => {
           </div>
         </div>
       )}
-      {status === "logged in" && <button onClick={logout}>LogOut</button>}
+      {/* {status === "logged in" && <button onClick={logout}>LogOut</button>} */}
     </div>
   );
 };

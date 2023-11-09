@@ -17,5 +17,9 @@ const userdetails = new mongoose.Schema({
     type: String,
     required: true,
   },
+  image: {
+    type: String,
+    contentType: String,
+  },
 });
 module.exports = mongoose.model("UserDetails1", userdetails);

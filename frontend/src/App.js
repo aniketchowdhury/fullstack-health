@@ -10,7 +10,29 @@ import SignUp from "./SignUp";
 function App() {
   // const navigation = useNavigate();
   // const location = useLocation();
+  const [data, setData] = useState([]);
   const [isLoggedIn, setIsLoggedIn] = useState(false);
+  useEffect(() => {
+    const ws = new WebSocket("wss://ws.bitstamp.net");
+    const apiCall = {
+      event: "bts:subscribe",
+      data: { channel: "order_book_btcusd" },
+    };
+    ws.onopen = (event) => {
+      ws.send(JSON.stringify(apiCall));
+    };
+    ws.onmessage = function (event) {
+      // const json = JSON.parse(event.data);
+      try {
+        // if ((json.event === 'data')) {
+        console.log("from server", event.data);
+      } catch (err) {
+        console.log(err);
+      }
+    };
+    //clean up function
+    return () => ws.close();
+  }, []);
   useEffect(() => {
     const fetchData = async () => {
       try {
@@ -21,6 +43,7 @@ function App() {
         if (res2.ok) {
           const data2 = await res2.json();
           setIsLoggedIn(true);
+          setData(data2);
           // navigation("/dashboard");
           console.log("****health data", data2);
         } else throw res2;
@@ -55,15 +78,19 @@ function App() {
   return (
     // <BrowserRouter>
     <>
-      <div
-        style={{
-          display: "flex",
-          flexDirection: "row-reverse",
-          padding: "20px",
-        }}
-      >
-        {isLoggedIn && <button onClick={() => logout()}>LOG OUT</button>}
-      </div>
+      {isLoggedIn && (
+        <div
+          style={{
+            display: "flex",
+            flexDirection: "row-reverse",
+            padding: "20px",
+          }}
+        >
+          {data?.image && <img src={data.image} alt="avatar" />}
+          <p>Hello {data.username}</p>
+          <button onClick={() => logout()}>LOG OUT</button>
+        </div>
+      )}
       <Routes>
         <Route path="/" exact element={<HomePage />} />
         <Route path="/signup" exact element={<SignUp />} />

@@ -27,6 +27,7 @@ router.use(
 router.get("/", async (req, res) => {
   try {
     const dataCopy = await data.find();
+    console.log("***inside func '/'");
     res.send(dataCopy);
   } catch (err) {
     res.status(500).json({ message: err.message });
@@ -35,6 +36,7 @@ router.get("/", async (req, res) => {
 });
 
 router.get("/:username", cache, async (req, res) => {
+  console.log("****inside func");
   res.json(res.value);
   // try {
   //   value = await data.findOne({ username: req.params.username });
@@ -67,7 +69,7 @@ router.post("/", async (req, res) => {
   }
 });
 
-router.patch("/:id", getData, async (req, res) => {
+router.patch("/:id", cachePatch, async (req, res) => {
   if (req.body.username != null) {
     res.value.username = req.body.username;
   }
@@ -78,6 +80,7 @@ router.patch("/:id", getData, async (req, res) => {
     res.value.contact = req.body.contact;
   }
   try {
+    console.log("*** RES.VALUE.SAVE", res.value);
     const updatedData = await res.value.save();
     res.status(201).json(updatedData);
   } catch (err) {
@@ -119,7 +122,7 @@ async function cache(req, res, next) {
     if (cacheResults) {
       isCached = true;
       results = JSON.parse(cacheResults);
-      console.log("*****chached results=", results);
+      console.log("*****cached results=", results);
     } else {
       results = await data.findOne({ username: req.params.username });
       if (results == null) {
@@ -131,8 +134,47 @@ async function cache(req, res, next) {
   } catch (err) {
     return res.status(500).json({ message: err.message });
   }
-  res.value = { username: username, email: results, isCached: isCached };
+  res.value = { username: username, email: results?.email, isCached: isCached };
   next();
 }
 
+/***
+ * cache for _id for patch & delete
+ */
+async function cachePatch(req, res, next) {
+  const { id } = req.params;
+  let results;
+  let isCached = false;
+  if (req.body.username != null) {
+    res.value.username = req.body.username;
+  }
+  if (req.body.password != null) {
+    res.value.password = req.body.password;
+  }
+  if (req.body.contact != null) {
+    res.value.contact = req.body.contact;
+  }
+  console.log("****inside cache2");
+  try {
+    const cacheResults = await redisClient.get(id);
+    if (cacheResults) {
+      isCached = true;
+      results = JSON.parse(cacheResults);
+      console.log("*****cached2 results=", results);
+    } else {
+      results = await data.findById(req.params.id);
+      if (results == null) {
+        return res.status(404).json({ message: "wrong ID" });
+      }
+      console.log("****database results", results);
+      await redisClient.set(id, JSON.stringify(results?.email));
+      const updatedData = await res.value.save();
+      return;
+    }
+  } catch (err) {
+    return res.status(500).json({ message: err.message });
+  }
+  res.value = res;
+  next();
+}
 module.exports = router;
